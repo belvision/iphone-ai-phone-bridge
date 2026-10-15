@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 from aiohttp.test_utils import TestClient, TestServer
 from native_server import create_app
+from crm_store import CrmStore
 from retell_relay import RetellRelay, allowed_request, save_proxy, load_proxy
 
 
@@ -63,7 +64,10 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
         class Lease:
             def restore(self): pass
             def expired(self): return False
-        with patch('retell_relay.load_proxy', return_value=None), patch('native_server.MicrophoneLease', Lease):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch('retell_relay.load_proxy', return_value=None), \
+             patch('native_server.MicrophoneLease', Lease), \
+             patch('crm_service.CrmStore', return_value=CrmStore(Path(directory) / 'crm.sqlite3')):
             client = TestClient(TestServer(create_app(phone_monitor=Monitor())))
             await client.start_server()
             try:

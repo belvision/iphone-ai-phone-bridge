@@ -2,6 +2,8 @@ import { startNativeBridge } from './browser-native.js';
 import { createNativeRetellCall } from './native-retell.ts';
 import { createNativeElevenCall } from './native-eleven.js';
 import { AutoCallGate, describePhoneState } from './auto-call.js';
+import './crm-ui.js';
+import './contacts-ui.js';
 const el = id => document.getElementById(id);
 const gate = new AutoCallGate();
 let bridge, call, stopping = false, pending = 0, operation = 0, countdown;
@@ -159,6 +161,11 @@ function controls() {
     el(id).ariaPressed = String(provider() === name);
   }
   el('saveEleven').disabled = busy || !!bridge || !!call || gate.mode !== 'idle' || elevenLoading;
+  for (const [id, voice] of [['voiceMale','cjVigY5qzO86Huf0OWal'],['voiceFemale','hpp4J3VqNfWAUOO0d1Us']]) {
+    el(id).disabled = el('saveEleven').disabled;
+    el(id).ariaPressed = String(el('voiceId').value.trim() === voice);
+  }
+  el('voiceId').disabled = el('saveEleven').disabled;
   el('saveEleven').textContent = provider() === 'agents' ? 'Сохранить инструкцию агента' : 'Сохранить настройки';
   el('retellFields').hidden = provider() !== 'retell';
   el('elevenFields').hidden = provider() === 'retell';
@@ -415,6 +422,13 @@ for (const [id, mode] of [['routeDirect', 'direct-hfp'], ['routeVirtual', 'virtu
   el('audioMode').onchange(); controls(); void saveConnection();
 };
 controls();
+for (const [id, voice] of [['voiceMale','cjVigY5qzO86Huf0OWal'],['voiceFemale','hpp4J3VqNfWAUOO0d1Us']]) el(id).onclick = () => {
+  if (el(id).disabled) return;
+  el('voiceId').value = voice;
+  el('elevenStatus').textContent = 'Голос выбран. Нажмите «Сохранить», чтобы применить его к следующему разговору.';
+  controls();
+};
+el('voiceId').oninput = controls;
 for (const [id,name] of [['engineRetell','retell'],['engineAgents','agents'],['engineCustom','custom']]) el(id).onclick = () => {
   if (el(id).disabled) return;
   el('provider').value = name; el('notice').textContent = '';

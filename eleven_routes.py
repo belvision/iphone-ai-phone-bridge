@@ -5,6 +5,7 @@ import aiohttp
 from aiohttp import web, WSMsgType
 from eleven_store import ElevenStore, public_config, validate, DEFAULTS
 from eleven_dialog import ElevenDialog, DialogError
+from crm_service import CrmService
 
 ORIGINS = {'http://localhost:8766', 'http://127.0.0.1:8766'}
 
@@ -20,15 +21,26 @@ class ElevenService:
         self.store = ElevenStore()
         self.http = None
         self.dialog = None
+        self.operation_lock = asyncio.Lock()
+        self.crm = CrmService(self)
 
     async def start(self):
         self.http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, connect=12, sock_read=40))
+        await self.crm.start()
 
     async def close(self):
         if self.dialog: await self.dialog.close()
+        await self.crm.close()
         if self.http: await self.http.close()
 
     async def settings(self, request):
+        if request.method != 'POST': return await self._settings(request)
+        check_origin(request)
+        if self.operation_lock.locked(): raise web.HTTPConflict(text='Stop the assistant or wait for settings to finish saving')
+        async with self.operation_lock:
+            return await self._settings(request)
+
+    async def _settings(self, request):
         if request.method == 'POST':
             check_origin(request)
             if self.server.bridge is not None or self.dialog:
@@ -78,11 +90,14 @@ class ElevenService:
         agent['first_message'] = config['greeting']
         agent['disable_first_message_interruptions'] = False
         agent['prompt']['prompt'] = config['prompt']
+        if config['voiceId']:
+            conversation['tts']['voice_id'] = config['voiceId']
         conversation['turn']['mode'] = 'turn'
         conversation['turn']['turn_eagerness'] = 'eager'
         conversation['turn']['speculative_turn'] = True
         events = conversation['conversation'].setdefault('client_events',[])
-        if 'interruption' not in events: events.append('interruption')
+        for event in ('interruption', 'user_transcript', 'agent_response', 'agent_response_correction', 'agent_tool_response'):
+            if event not in events: events.append(event)
         platform = data['platform_settings']
         # The private, authenticated bridge supplies the owner's current prompt
         # on every call, including when the dashboard uses versioned drafts.
@@ -90,6 +105,8 @@ class ElevenService:
         override['language'] = True
         override['first_message'] = True
         override['prompt']['prompt'] = True
+        if config['voiceId']:
+            platform['overrides']['conversation_config_override'].setdefault('tts', {})['voice_id'] = True
         async with self.http.patch(url,headers=headers,json={'conversation_config':conversation,
                 'platform_settings':platform},allow_redirects=False,**route) as response:
             if response.status != 200: raise DialogError(f'Не удалось сохранить агента ElevenLabs: HTTP {response.status}.')
@@ -101,47 +118,96 @@ class ElevenService:
 
     async def conversation(self, request):
         check_origin(request)
+        if self.operation_lock.locked(): raise web.HTTPConflict(text='One ElevenLabs operation is already running')
+        async with self.operation_lock:
+            return await self._conversation(request)
+
+    async def _conversation(self, request):
         mode = request.query.get('mode')
         if mode not in ('agents', 'custom'): raise web.HTTPBadRequest()
         bridge = self.server.bridge
         if not self.answered() or not bridge or not bridge.alive:
             raise web.HTTPConflict(text='An answered phone call and audio bridge are required')
         if self.dialog: raise web.HTTPConflict(text='One ElevenLabs session is already running')
+        sequence = self.server.phone_monitor.snapshot()['callSequence']
         config = await asyncio.to_thread(self.store.read)
         if not public_config(config)['agentsReady' if mode == 'agents' else 'customReady']:
             raise web.HTTPConflict(text='Configure ElevenLabs before calling')
-        sequence = self.server.phone_monitor.snapshot()['callSequence']
+        # Recheck after disk I/O: the caller may already have hung up.
+        if (not self.answered() or bridge is not self.server.bridge or not bridge.alive
+                or self.server.phone_monitor.snapshot().get('callSequence') != sequence):
+            raise web.HTTPConflict(text='The phone call has ended')
         socket = web.WebSocketResponse(heartbeat=10, receive_timeout=20, max_msg_size=1024)
-        await socket.prepare(request)
+        identity = self.server.phone_monitor.snapshot(include_contact=True, include_control=True)
+        if identity.get('callSequence') != sequence: raise web.HTTPConflict(text='The phone call has changed')
+        phone_token = identity.pop('phoneCallToken', '')
+        capture = await self.crm.begin(mode, identity)
+        dialog, task = None, None
+        reason = 'connection_closed'
         async def emit(message):
             if not socket.closed:
                 await asyncio.wait_for(socket.send_json(message), 1)
-        dialog = ElevenDialog(mode, config, bridge, self.http, self.server.retell_relay.proxy, emit)
-        self.dialog = dialog
         async def run():
+            nonlocal reason
             try:
-                await asyncio.wait_for(self.run_dialog(dialog, sequence), timeout=None)
+                completed = await self.run_dialog(dialog, sequence)
+                reason = 'ended'
+                if completed and mode == 'agents' and getattr(dialog, 'end_call_requested', False):
+                    reason = 'agent_end_call'
+                    result = await self.end_phone_after_agent(dialog, sequence, phone_token)
+                    await emit({'type': 'phone_hangup', **result})
                 await emit({'type': 'ended'})
             except asyncio.CancelledError: raise
-            except DialogError as exc: await emit({'type': 'error', 'message': str(exc)})
-            except Exception: await emit({'type': 'error', 'message': 'Соединение ElevenLabs прервалось. Проверьте API и прокси.'})
+            except DialogError as exc:
+                reason = 'error'
+                await emit({'type': 'error', 'message': str(exc)})
+            except Exception:
+                reason = 'error'
+                await emit({'type': 'error', 'message': 'Соединение ElevenLabs прервалось. Проверьте API и прокси.'})
             finally:
                 await dialog.close()
                 await socket.close()
-        task = asyncio.create_task(run())
         try:
+            await socket.prepare(request)
+            if not self.answered() or self.server.phone_monitor.snapshot().get('callSequence') != sequence or not bridge.alive:
+                reason = 'phone_ended_before_start'
+                await socket.close()
+                return socket
+            dialog = ElevenDialog(mode, config, bridge, self.http, self.server.retell_relay.proxy, emit, capture.observe)
+            self.dialog = dialog
+            task = asyncio.create_task(run())
             async for message in socket:
                 if message.type == WSMsgType.TEXT:
-                    if message.data == 'stop': break
+                    if message.data == 'stop':
+                        if reason == 'connection_closed': reason = 'stopped'
+                        break
                     if message.data != 'ping': break
                     await socket.send_str('pong')
                 elif message.type in (WSMsgType.ERROR, WSMsgType.CLOSE, WSMsgType.CLOSED): break
         finally:
-            task.cancel()
-            with suppress(asyncio.CancelledError, Exception): await task
-            await dialog.close()
+            if task:
+                task.cancel()
+                with suppress(asyncio.CancelledError, Exception): await task
+            if dialog: await dialog.close()
             if self.dialog is dialog: self.dialog = None
+            self.crm.finish(capture, reason, getattr(dialog, 'observer_errors', 0))
         return socket
+
+    async def end_phone_after_agent(self, dialog, sequence, phone_token):
+        """A verified tool event may end only the call that this session captured."""
+        if getattr(dialog, 'mode', None) != 'agents' or not getattr(dialog, 'end_call_requested', False):
+            return {'ok': False, 'status': 'no-agent-end-command'}
+        if not getattr(dialog, 'end_call_audio_drained', False):
+            return {'ok': False, 'status': 'audio-not-drained'}
+        if not phone_token:
+            return {'ok': False, 'status': 'no-call-token'}
+        try:
+            return await self.server.phone_monitor.end_call(sequence, phone_token)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # No raw provider, identifier, or process errors in browser/logs.
+            return {'ok': False, 'status': 'command-failed'}
 
     async def run_dialog(self, dialog, sequence):
         # Independent phone guard also stops cloud sessions when browser polling
@@ -153,7 +219,10 @@ class ElevenService:
                 state = self.server.phone_monitor.snapshot()
                 if not self.answered() or state.get('callSequence') != sequence or not dialog.bridge.alive:
                     break
-            if task.done(): await task
+            if task.done():
+                await task
+                return True
+            return False
         finally:
             task.cancel()
             with suppress(asyncio.CancelledError): await task

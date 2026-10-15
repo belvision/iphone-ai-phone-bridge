@@ -1,0 +1,143 @@
+{
+  "date": "2026-10-15",
+  "timezone": "Europe/Minsk",
+  "scope": "Read-only HTTPS network probe; not an end-to-end voice benchmark",
+  "direct_server": "HTTP 302 to ElevenLabs country restrictions help page; API unavailable on this route",
+  "same_proxy_new_connection_median_ms": {
+    "computer via same US proxy": 545.0,
+    "server via same US proxy": 546.3
+  },
+  "parallel_reused_connection_probe": [
+    {
+      "route": "computer via same US proxy",
+      "samples": [
+        {
+          "sample": 0,
+          "status": 200,
+          "headers_ms": 535.9
+        },
+        {
+          "sample": 1,
+          "status": 200,
+          "headers_ms": 184.1
+        },
+        {
+          "sample": 2,
+          "status": 200,
+          "headers_ms": 194.6
+        },
+        {
+          "sample": 3,
+          "status": 200,
+          "headers_ms": 427.2
+        },
+        {
+          "sample": 4,
+          "status": 200,
+          "headers_ms": 280.8
+        },
+        {
+          "sample": 5,
+          "status": 200,
+          "headers_ms": 196.6
+        },
+        {
+          "sample": 6,
+          "status": 200,
+          "headers_ms": 182.2
+        },
+        {
+          "sample": 7,
+          "status": 200,
+          "headers_ms": 199.8
+        },
+        {
+          "sample": 8,
+          "status": 200,
+          "headers_ms": 207.2
+        },
+        {
+          "sample": 9,
+          "status": 200,
+          "headers_ms": 189.3
+        },
+        {
+          "sample": 10,
+          "status": 200,
+          "headers_ms": 216.8
+        }
+      ],
+      "median_ms": 198.2,
+      "min_ms": 182.2,
+      "max_ms": 427.2,
+      "requests_ok": 11
+    },
+    {
+      "route": "server via same US proxy",
+      "samples": [
+        {
+          "sample": 0,
+          "status": 200,
+          "headers_ms": 526.0
+        },
+        {
+          "sample": 1,
+          "status": 200,
+          "headers_ms": 224.0
+        },
+        {
+          "sample": 2,
+          "status": 200,
+          "headers_ms": 186.8
+        },
+        {
+          "sample": 3,
+          "status": 200,
+          "headers_ms": 202.1
+        },
+        {
+          "sample": 4,
+          "status": 200,
+          "headers_ms": 388.0
+        },
+        {
+          "sample": 5,
+          "status": 200,
+          "headers_ms": 206.6
+        },
+        {
+          "sample": 6,
+          "status": 200,
+          "headers_ms": 205.6
+        },
+        {
+          "sample": 7,
+          "status": 200,
+          "headers_ms": 188.7
+        },
+        {
+          "sample": 8,
+          "status": 200,
+          "headers_ms": 188.4
+        },
+        {
+          "sample": 9,
+          "status": 200,
+          "headers_ms": 197.0
+        },
+        {
+          "sample": 10,
+          "status": 200,
+          "headers_ms": 192.5
+        }
+      ],
+      "median_ms": 199.6,
+      "min_ms": 186.8,
+      "max_ms": 388.0,
+      "requests_ok": 11
+    }
+  ],
+  "conclusion": "No material latency benefit from moving the API connection to gaev.by in this sample; the server still needs a permitted working route. Local Bluetooth/Phone Link remains required with the current iPhone setup.",
+  "paid_voice_calls_started_for_network_probe": 0,
+  "server_files_modified": false
+}

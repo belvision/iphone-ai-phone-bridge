@@ -11,6 +11,9 @@
 .route-select{width:100%;font:inherit;font-size:14px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#1c2a3b;margin-bottom:12px}.route-note{font-size:13px;color:#617083;margin:12px 0}.route-note a,.route-options a{color:#2563eb}.route-options{margin-top:22px;border-top:1px solid #e0e6ed;padding-top:16px}.route-options p{font-size:13px;line-height:1.6;margin:0 0 13px;color:#617083}.route-options strong{color:#34465b}select:focus-visible{outline:3px solid #a8c9ff;outline-offset:3px}
 </style>
 <style>.route-buttons{margin-bottom:14px;flex-wrap:wrap}.route-buttons button[aria-pressed=true]{background:#2563eb;color:#fff;border-color:#2563eb}textarea{width:100%;border:1px solid #cfd8e3;border-radius:8px;padding:10px;font:inherit;resize:vertical}[hidden]{display:none!important}</style>
+<style>
+.crm-table-wrap{overflow-x:auto;margin:16px 0}.crm-table{border-collapse:collapse;width:100%;min-width:600px;font-size:13px;table-layout:fixed}.crm-table th{text-align:left;color:#617083;font-weight:600;background:#f5f7fa}.crm-table th,.crm-table td{padding:12px 9px;border-bottom:1px solid #e0e6ed;vertical-align:top;overflow-wrap:anywhere}.crm-table th:nth-child(1){width:18%}.crm-table th:nth-child(2){width:22%}.crm-table th:nth-child(3){width:40%}.crm-table th:nth-child(4){width:20%}.crm-table small,.crm-table strong{display:block;margin:5px 0;color:#617083}.crm-table button{font-size:12px;padding:6px 9px;margin-top:8px}.crm-detail{margin-top:20px;border-top:1px solid #e0e6ed;padding-top:20px}.crm-detail h2{font-size:19px;margin:0 0 10px}.crm-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;margin-top:18px}.crm-grid>label{font-size:13px;color:#617083}.crm-grid input,.crm-grid select{margin:5px 0 14px}.crm-transcript{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.6 system-ui;max-height:360px;overflow:auto;padding:12px;background:#f5f7fa;border-radius:8px}.crm-summary{white-space:pre-wrap;font-size:14px;margin-bottom:8px}#crmCount{margin-left:auto;font-size:12px;color:#617083}@media(max-width:560px){.crm-grid{grid-template-columns:1fr}}
+</style>
 </head>
 <body>
 <header>
@@ -36,6 +39,50 @@
 <p id="networkStatus" class="subtle context" role="status">Проверяю подключение Retell…</p>
 <p class="footnote">Ограничение в 2 минуты снято. Разговор оплачивается по тарифу выбранного сервиса. «Остановить» выключает помощника и ожидание.</p>
 </section>
+<details id="crm" open>
+<summary>Результаты разговоров — ElevenLabs</summary>
+<div class="details-body">
+<div class="actions"><button id="crmRefresh" class="secondary">Обновить</button><span id="crmCount" role="status"></span></div>
+<p class="settings-note context">После звонка здесь появится итог и данные клиента. Итог готовит настроенная модель ответов — отдельным API-запросом после разговора. Retell в эту таблицу не записывается.</p>
+<p id="crmError" class="error" role="alert"></p>
+<p id="crmEmpty" class="subtle context">Здесь будут новые разговоры через ElevenLabs Agents и «Свой диалог». Сначала включите помощника и проведите звонок.</p>
+<div class="crm-table-wrap" id="crmTable" hidden><table class="crm-table"><thead><tr><th>Когда</th><th>Клиент</th><th>Итог</th><th>Работа с клиентом</th></tr></thead><tbody id="crmRows"></tbody></table></div>
+<div class="actions"><button id="crmPrevious" class="secondary" disabled>← Назад</button><button id="crmNext" class="secondary" disabled>Дальше →</button></div>
+<section id="crmDetail" class="crm-detail" hidden aria-labelledby="crmTitle">
+<h2 id="crmTitle"></h2><p id="crmSummary" class="crm-summary"></p><p id="crmNextStep" class="crm-summary"></p>
+<input id="crmLinkTarget" type="hidden"><p id="crmLinkedContact" class="subtle"></p><p id="crmCallNumber" class="subtle"></p><button id="crmChooseContact" class="secondary context">Выбрать из контактов</button>
+<p class="settings-note context">Разговор связывается с адресной книгой по полному номеру, если Windows его передала. Поля ниже — подтверждённые в разговоре данные для обратной связи. Их можно исправить вручную.</p>
+<div class="crm-grid">
+<label>Имя<input id="crmName" type="text" maxlength="200"></label>
+<label>Телефон<input id="crmPhone" type="text" maxlength="100"></label>
+<label>Telegram<input id="crmTelegram" type="text" maxlength="200"></label>
+<label>Статус<select id="crmStatus" class="route-select"><option value="new">Новая</option><option value="callback">Перезвонить</option><option value="done">Завершено</option><option value="declined">Отказ</option></select></label>
+</div>
+<label class="field" for="crmFollowUp">Когда и как связаться</label><input id="crmFollowUp" type="text" maxlength="1000" placeholder="Например: завтра после 14:00, звонок">
+<label class="field" for="crmNotes">Мои заметки</label><textarea id="crmNotes" rows="3" maxlength="4000"></textarea>
+<div class="actions context"><button id="crmSave">Сохранить карточку</button><button id="crmAnalyze" class="secondary">Сформировать итог заново</button><button id="crmClose" class="secondary">Закрыть без сохранения</button></div>
+<p id="crmDetailStatus" class="subtle context" role="status"></p>
+<details><summary>Расшифровка разговора</summary><div class="details-body"><p class="settings-note">Текст агента — сформированные реплики. При перебивании собеседник мог услышать только часть. Аудиозапись локально не создаётся.</p><pre id="crmTranscript" class="crm-transcript"></pre></div></details>
+</section>
+</div>
+</details>
+<details id="contacts">
+<summary>Контакты телефона и Google</summary>
+<div class="details-body">
+<p class="settings-note">Контакты хранятся на этом компьютере. В модель ответов адресная книга не отправляется. Для привязки вручную сначала откройте карточку разговора.</p>
+<label class="field context" for="contactsSearch">Найти по имени или номеру</label><input id="contactsSearch" type="text" maxlength="200" placeholder="Имя или телефон">
+<div class="actions"><button id="contactsSearchButton" class="secondary">Найти</button><span id="contactsCount" class="subtle" role="status"></span></div>
+<p id="contactsStatus" class="subtle context" role="status"></p>
+<div class="crm-table-wrap"><table class="crm-table"><thead><tr><th>Имя</th><th>Телефоны</th><th>Связать с разговором</th></tr></thead><tbody id="contactsRows"></tbody></table></div>
+<div class="actions"><button id="contactsPrevious" class="secondary" disabled>← Назад</button><button id="contactsNext" class="secondary" disabled>Дальше →</button></div>
+<details><summary>Загрузить контакты из файла</summary><div class="details-body">
+<p class="settings-note">iPhone: «Контакты» → «Списки» → удерживайте нужный список → «Экспортировать». Google Контакты: «Экспортировать» → формат vCard. Загружайте .vcf до 16 МБ; сохраняются только имена и телефоны.</p>
+<label class="field context" for="contactsSource">Источник</label><select id="contactsSource" class="route-select"><option value="iphone">iPhone</option><option value="google">Google Контакты</option><option value="vcard">Другой файл vCard</option></select>
+<label class="field" for="contactsFile">Файл контактов .vcf</label><input id="contactsFile" type="file" accept=".vcf,text/vcard">
+<button id="contactsImport" class="secondary context">Импортировать контакты</button>
+</div></details>
+</div>
+</details>
 <details id="soundRoutes">
 <summary>Способ передачи звука</summary>
 <div class="details-body">
@@ -64,8 +111,14 @@
 <div id="elevenFields" hidden>
 <label class="field" for="elevenKey">API-ключ ElevenLabs</label><input id="elevenKey" type="password" autocomplete="off" placeholder="Оставьте пустым, если ключ уже сохранён">
 <div id="agentsFields"><label class="field" for="elevenAgent">ID агента ElevenLabs</label><input id="elevenAgent" type="text" spellcheck="false"></div>
-<div id="customFields">
+<p class="field">Голос помощника — русский язык</p>
+<div class="actions route-buttons" role="group" aria-label="Голос помощника">
+<button id="voiceMale" class="secondary" aria-pressed="false">Мужской — Eric</button>
+<button id="voiceFemale" class="secondary" aria-pressed="false">Женский — Bella</button>
+</div>
+<p class="settings-note">Оба голоса среднего возраста по каталогу ElevenLabs. Исходные голоса английские; русскую речь создаёт многоязычная модель. После выбора нажмите «Сохранить».</p>
 <label class="field" for="voiceId">ID голоса ElevenLabs</label><input id="voiceId" type="text" spellcheck="false">
+<div id="customFields">
 <label class="field" for="llmUrl">Адрес API модели</label><input id="llmUrl" type="url" spellcheck="false" placeholder="https://api.deepseek.com/chat/completions">
 <label class="field" for="llmModel">Модель ответов</label><input id="llmModel" type="text" spellcheck="false">
 <label class="field" for="llmKey">API-ключ модели</label><input id="llmKey" type="password" autocomplete="off" placeholder="Оставьте пустым, если ключ уже сохранён">

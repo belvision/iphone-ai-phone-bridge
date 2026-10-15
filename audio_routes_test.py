@@ -12,6 +12,7 @@ from aiohttp.test_utils import TestClient, TestServer
 import audio_routes as routes
 from native_audio import NativeAudio, SampleQueue
 from native_server import create_app
+from crm_store import CrmStore
 
 
 class RouteTests(unittest.TestCase):
@@ -89,7 +90,9 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
             def status(self): return {"virtualMicInstalled": False, "virtualMicPrepared": False}
         def forbidden_audio_factory(**kwargs):
             raise AssertionError("Must not open audio on an unprepared route")
-        with patch("native_server.MicrophoneLease", Lease):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch("native_server.MicrophoneLease", Lease), \
+             patch("crm_service.CrmStore", return_value=CrmStore(Path(directory) / "crm.sqlite3")):
             client = TestClient(TestServer(create_app(audio_factory=forbidden_audio_factory, phone_monitor=Monitor())))
             await client.start_server()
             try:

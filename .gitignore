@@ -16,3 +16,11 @@ app.js
 .mic-restore.json
 *.local.json
 *.browser-only.*
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-*
+*.sqlite3-*
+*.db-*
+*.vcf
+contacts*.csv

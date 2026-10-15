@@ -11,6 +11,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from eleven_store import ElevenStore, public_config
 from eleven_dialog import PcmPlayer, ElevenDialog
 from native_server import create_app
+from crm_store import CrmStore
 
 
 class StoreTests(unittest.TestCase):
@@ -101,7 +102,9 @@ class GuardTests(unittest.IsolatedAsyncioTestCase):
             def expired(self):return False
         with tempfile.TemporaryDirectory() as folder:
             store=ElevenStore(Path(folder)/'config.dpapi')
-            with patch('eleven_routes.ElevenStore',return_value=store),patch('native_server.MicrophoneLease',Lease):
+            with patch('eleven_routes.ElevenStore',return_value=store), \
+                 patch('native_server.MicrophoneLease',Lease), \
+                 patch('crm_service.CrmStore',return_value=CrmStore(Path(folder)/'crm.sqlite3')):
                 client=TestClient(TestServer(create_app(phone_monitor=Monitor())))
                 await client.start_server()
                 try:

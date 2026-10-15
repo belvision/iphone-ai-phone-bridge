@@ -6,6 +6,7 @@ from unittest.mock import patch
 from aiohttp.test_utils import TestClient, TestServer
 from connection_store import ConnectionStore
 from native_server import create_app
+from crm_store import CrmStore
 
 FAKE = {"key": "public_key_offline_test_only", "agentId": "agent_offline", "audioMode": "virtual-mic"}
 
@@ -36,7 +37,9 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
             def expired(self): return False
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "connection.dpapi"
-            with patch("native_server.ConnectionStore", lambda: ConnectionStore(path)), patch("native_server.MicrophoneLease", Lease):
+            with patch("native_server.ConnectionStore", lambda: ConnectionStore(path)), \
+                 patch("native_server.MicrophoneLease", Lease), \
+                 patch("crm_service.CrmStore", return_value=CrmStore(Path(directory) / "crm.sqlite3")):
                 client = TestClient(TestServer(create_app(phone_monitor=Monitor())))
                 await client.start_server()
                 try:

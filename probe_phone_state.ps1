@@ -1,11 +1,14 @@
-# Read-only Windows telephony state probe. Run with Windows PowerShell 5.1.
-# Does not dial, answer, hang up, register an app, or change audio routing.
-# Phone numbers, contact names, line IDs and call IDs never leave this process.
+# Windows telephony probe and guarded end command. Windows PowerShell 5.1.
+# Normally read-only. -EndCurrentCall accepts one private token on stdin and
+# can end only the matching single Talking call; never dials or changes routing.
+# Current-call number/name go only to the parent monitor for local CRM matching.
+# Line IDs and call IDs never leave this process; no address book is enumerated.
 # Official API: https://learn.microsoft.com/en-us/uwp/api/windows.applicationmodel.calls.phonecallstatus
 param(
     [ValidateRange(100, 5000)][int]$IntervalMs = 250,
     [switch]$Once,
-    [switch]$Diagnostic
+    [switch]$Diagnostic,
+    [switch]$EndCurrentCall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -27,11 +30,32 @@ function Get-NonterminalCalls($Calls) {
     }
 }
 
+function Get-BoundedContactText([string]$Value, [int]$Limit) {
+    $text = ($Value -replace '[\x00-\x1f\x7f-\x9f]', '').Trim()
+    if ($text.Length -gt $Limit) {
+        $text = $text.Substring(0, $Limit)
+        if ([char]::IsHighSurrogate($text[$text.Length - 1])) { $text = $text.Substring(0, $text.Length - 1) }
+    }
+    return $text
+}
+
+function Get-CallToken([string]$CallId) {
+    if ([string]::IsNullOrWhiteSpace($CallId)) { throw 'Call identifier unavailable' }
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { return [BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($CallId))).Replace('-', '').ToLowerInvariant() }
+    finally { $hash.Dispose() }
+}
+
+function Emit-EndResult([string]$Status, [bool]$Attempted = $false) {
+    [Console]::WriteLine((@{operation='end-call'; status=$Status; attempted=$Attempted} | ConvertTo-Json -Compress))
+}
+
 try {
     Add-Type -AssemblyName System.Runtime.WindowsRuntime
     [void][Windows.ApplicationModel.Calls.PhoneCallStore,Windows.ApplicationModel.Calls,ContentType=WindowsRuntime]
     [void][Windows.ApplicationModel.Calls.PhoneLine,Windows.ApplicationModel.Calls,ContentType=WindowsRuntime]
     [void][Windows.ApplicationModel.Calls.PhoneCallsResult,Windows.ApplicationModel.Calls,ContentType=WindowsRuntime]
+    [void][Windows.ApplicationModel.Calls.PhoneCallOperationStatus,Windows.ApplicationModel.Calls,ContentType=WindowsRuntime]
     $script:asTask = [System.WindowsRuntimeSystemExtensions].GetMethods() |
         Where-Object {
             $_.Name -eq 'AsTask' -and $_.IsGenericMethod -and
@@ -51,6 +75,39 @@ function Await-WinRT($Operation, [Type]$ResultType) {
         throw 'WinRT query timeout'
     }
     return $task.Result
+}
+
+if ($EndCurrentCall) {
+    $attempted = $false
+    try {
+        # Token is transported over stdin, never command-line arguments or logs.
+        $expectedToken = [Console]::In.ReadLine()
+        if ($expectedToken -notmatch '^[a-f0-9]{64}$') { Emit-EndResult 'invalid-target'; exit 0 }
+        $endStore = Await-WinRT ([Windows.ApplicationModel.Calls.PhoneCallManager]::RequestStoreAsync()) ([Windows.ApplicationModel.Calls.PhoneCallStore])
+        $endLineId = Await-WinRT ($endStore.GetDefaultLineAsync()) ([Guid])
+        $endLine = Await-WinRT ([Windows.ApplicationModel.Calls.PhoneLine]::FromIdAsync($endLineId)) ([Windows.ApplicationModel.Calls.PhoneLine])
+        if (-not $endLine -or $endLine.Transport.ToString() -ne 'Bluetooth') { Emit-EndResult 'unavailable'; exit 0 }
+        $endResult = Await-WinRT ($endLine.GetAllActivePhoneCallsAsync()) ([Windows.ApplicationModel.Calls.PhoneCallsResult])
+        if ($endResult.OperationStatus.ToString() -ne 'Succeeded') { Emit-EndResult 'unavailable'; exit 0 }
+        $endCalls = @(Get-NonterminalCalls $endResult.AllActivePhoneCalls)
+        if ($endCalls.Count -eq 0) { Emit-EndResult 'not-connected'; exit 0 }
+        if ($endCalls.Count -ne 1) { Emit-EndResult 'multiple-calls'; exit 0 }
+        $endCall = $endCalls[0]
+        if ((Get-CallToken $endCall.CallId) -cne $expectedToken) { Emit-EndResult 'wrong-call'; exit 0 }
+        if ($endCall.Status.ToString() -ne 'Talking') { Emit-EndResult 'not-connected'; exit 0 }
+        if ($endCall.AudioDevice.ToString() -ne 'LocalDevice') { Emit-EndResult 'not-on-computer'; exit 0 }
+        $attempted = $true
+        $operation = Await-WinRT ($endCall.EndAsync()) ([Windows.ApplicationModel.Calls.PhoneCallOperationStatus])
+        $status = switch ($operation.ToString()) {
+            'Succeeded' { 'succeeded' }
+            'TimedOut' { 'timed-out' }
+            'ConnectionLost' { 'connection-lost' }
+            'InvalidCallState' { 'not-connected' }
+            default { 'command-failed' }
+        }
+        Emit-EndResult $status $attempted
+    } catch { Emit-EndResult 'command-failed' $attempted }
+    exit 0
 }
 
 $store = $null
@@ -91,8 +148,8 @@ do {
                 $lastCallDirection = 'unknown'
             }
             if ($lastCallDirection -eq 'unknown') {
-                # CallDirection is immutable. Read only this property, never
-                # enumerate/serialize PhoneCallInfo (it also contains personal data).
+                # Read explicit properties only; never serialize PhoneCallInfo
+                # itself (it also contains line IDs and other personal data).
                 try {
                     $lastCallDirection = switch ($call.GetPhoneCallInfo().CallDirection.ToString()) {
                         'Outgoing' { 'outgoing' }
@@ -114,6 +171,16 @@ do {
             }
             $state.active = $state.callPhase -eq 'connected'
             $state.audioOnComputer = $call.AudioDevice.ToString() -eq 'LocalDevice'
+            if ($state.active) {
+                $state.phoneCallToken = Get-CallToken $call.CallId
+                # User-authorized current caller metadata for local CRM. A
+                # contact lookup failure must not stop call-state monitoring.
+                try {
+                    $callInfo = $call.GetPhoneCallInfo()
+                    $state.phoneNumber = Get-BoundedContactText $callInfo.PhoneNumber 100
+                    $state.displayName = Get-BoundedContactText $callInfo.DisplayName 200
+                } catch {}
+            }
         } else {
             # Multiple/held calls are deliberately not selected automatically.
             $state.callPhase = 'multiple'

@@ -1,7 +1,8 @@
 """Minimal Agents and custom STT -> streaming LLM -> streaming TTS sessions.
 
-No CRM, tools, recordings, or retained transcripts. PCM is paced in real time;
-barge-in invalidates queued audio and cancels in-flight response generation.
+PCM is paced in real time; barge-in invalidates queued audio and cancels
+in-flight response generation. An optional, synchronous observer queues CRM
+events without database or network work on the audio path.
 """
 import asyncio
 import base64
@@ -17,6 +18,10 @@ from native_audio import StreamingDecimator, WEB_RATE, PACKET_FRAMES
 
 class DialogError(Exception): pass
 
+END_CALL_QUIET_SECONDS = .35
+END_CALL_DRAIN_SECONDS = 25
+PHONE_OUTPUT_TAIL_SECONDS = .25
+
 
 class PcmPlayer:
     def __init__(self, bridge):
@@ -30,7 +35,9 @@ class PcmPlayer:
     def interrupt(self):
         self.generation += 1
         self.pending = np.empty(0, np.float32)
-        while not self.queue.empty(): self.queue.get_nowait()
+        while not self.queue.empty():
+            self.queue.get_nowait()
+            self.queue.task_done()
         self.bridge.output_queue.clear()
         self.tail = 0.0
         return self.generation
@@ -69,14 +76,40 @@ class PcmPlayer:
         next_at = time.monotonic()
         while True:
             generation, packet = await self.queue.get()
-            # Keep an absolute clock: resetting it after every Windows timer
-            # overshoot would gradually slow 48 kHz audio to ~32 kHz.
-            if time.monotonic() - next_at > .1: next_at = time.monotonic()
-            await asyncio.sleep(max(0, next_at - time.monotonic()))
-            if generation == self.generation and self.bridge.alive:
-                self.bridge.push_audio(packet)
-                self.tail = time.monotonic() + .06
-            next_at += .02
+            try:
+                # Keep an absolute clock: resetting it after every Windows timer
+                # overshoot would gradually slow 48 kHz audio to ~32 kHz.
+                if time.monotonic() - next_at > .1: next_at = time.monotonic()
+                await asyncio.sleep(max(0, next_at - time.monotonic()))
+                if generation == self.generation and self.bridge.alive:
+                    self.bridge.push_audio(packet)
+                    self.tail = time.monotonic() + .06
+                next_at += .02
+            finally:
+                self.queue.task_done()
+
+    async def drain(self, timeout=END_CALL_DRAIN_SECONDS):
+        """Wait for PCM and the native output queue; a device tail is best effort."""
+        generation, deadline = self.generation, time.monotonic() + timeout
+        try:
+            await asyncio.wait_for(self.flush(generation), max(.001, deadline - time.monotonic()))
+            await asyncio.wait_for(self.queue.join(), max(.001, deadline - time.monotonic()))
+        except TimeoutError:
+            return False
+        empty_since = None
+        while time.monotonic() < deadline:
+            if generation != self.generation or not self.bridge.alive or self.task.done():
+                return False
+            queued, _ = self.bridge.output_queue.snapshot()
+            if self.queue.empty() and not queued and time.monotonic() >= self.tail:
+                if empty_since is None:
+                    empty_since = time.monotonic()
+                if time.monotonic() - empty_since >= PHONE_OUTPUT_TAIL_SECONDS:
+                    return True
+            else:
+                empty_since = None
+            await asyncio.sleep(.02)
+        return False
 
     async def close(self):
         self.interrupt()
@@ -85,7 +118,7 @@ class PcmPlayer:
 
 
 class ElevenDialog:
-    def __init__(self, mode, config, bridge, http, proxy, emit):
+    def __init__(self, mode, config, bridge, http, proxy, emit, observer=None):
         self.mode, self.config, self.bridge = mode, config, bridge
         self.http, self.proxy, self.emit = http, proxy, emit
         self.input = asyncio.Queue(maxsize=15)
@@ -101,9 +134,33 @@ class ElevenDialog:
         self.first_text = None
         self.first_audio = None
         self.interrupted_event = -1
+        self.observer = observer
+        self.observer_errors = 0
+        self.end_call_requested = False
+        self.end_call_audio_drained = False
+        self._end_call_task = None
+        self._last_audio_at = 0.0
+        self._receive_finished = False
+        self._receive_normal_close = False
+
+    def observe(self, event):
+        """The observer must only enqueue; a CRM failure must not drop audio."""
+        if self.observer is None: return
+        try: self.observer(event)
+        except Exception:
+            # Route finalization can report incomplete capture. Do not log
+            # event contents or observer errors, which may contain caller data.
+            self.observer_errors += 1
+
+    def transcript(self, role, text, *, source):
+        if isinstance(text, str) and text.strip():
+            self.observe({'type': 'transcript', 'role': role, 'text': text.strip(), 'source': source})
 
     def feed(self, packet):
         if self.closed: return
+        # Keep caller audio flowing for barge-in while the farewell drains.
+        # A server that has already closed no longer consumes that input.
+        if self.end_call_requested and self.sender is not None and self.sender.done(): return
         if self.sender is None and self.input.full():
             self.input.get_nowait()  # Keep only recent caller audio while connecting.
         try: self.input.put_nowait(packet)
@@ -164,9 +221,12 @@ class ElevenDialog:
                 if parsed.scheme != 'wss' or parsed.hostname != 'api.elevenlabs.io' or parsed.path != '/v1/convai/conversation':
                     raise DialogError('ElevenLabs вернул некорректный адрес подключения.')
                 self.remote = await self.http.ws_connect(url, heartbeat=15, max_msg_size=4*1024*1024, **self.route())
+                override = {'agent': {'language':'ru', 'first_message':self.config['greeting'],
+                                      'prompt':{'prompt':self.config['prompt']}}}
+                if self.config['voiceId']:
+                    override['tts'] = {'voice_id':self.config['voiceId']}
                 await self.remote.send_json({'type': 'conversation_initiation_client_data',
-                    'conversation_config_override': {'agent': {'language':'ru',
-                        'first_message':self.config['greeting'], 'prompt':{'prompt':self.config['prompt']}}}})
+                                             'conversation_config_override': override})
             else:
                 self.remote = await self.http.ws_connect('wss://api.elevenlabs.io/v1/speech-to-text/realtime',
                     params={'model_id': 'scribe_v2_realtime', 'audio_format': 'pcm_16000', 'language_code': 'ru',
@@ -177,6 +237,8 @@ class ElevenDialog:
             try:
                 done, _ = await asyncio.wait((receiver, self.done), return_when=asyncio.FIRST_COMPLETED)
                 for item in done: await item
+                if receiver in done and self.end_call_requested and self._end_call_task:
+                    await self._end_call_task
             finally:
                 receiver.cancel()
                 with suppress(asyncio.CancelledError): await receiver
@@ -188,13 +250,60 @@ class ElevenDialog:
         if self.sender: return
         self.sender = asyncio.create_task(self.send_audio())
         def sender_done(task):
-            if not task.cancelled() and task.exception() and not self.done.done():
+            if not task.cancelled() and task.exception() and not self.done.done() and not self.end_call_requested:
                 self.done.set_exception(DialogError('Передача голоса в ElevenLabs прервалась.'))
         self.sender.add_done_callback(sender_done)
         await self.emit({'type': 'live'})
         if self.mode == 'custom': self.start_answer(self.config['greeting'], greeting=True)
 
     async def receive(self):
+        try:
+            await self._receive_messages()
+        finally:
+            self._receive_finished = True
+            self._receive_normal_close = getattr(self.remote, 'close_code', None) == 1000
+
+    def request_end_call(self, event):
+        """Only a successful authenticated server system-tool result is an intent to hang up."""
+        if (self.mode != 'agents' or not isinstance(event, dict) or event.get('tool_name') != 'end_call'
+                or event.get('tool_type') != 'system' or event.get('is_error') is not False
+                or ('is_blocked' in event and event['is_blocked'] is not False)
+                or ('is_called' in event and event['is_called'] is not True)
+                or ('status' in event and event['status'] != 'success')):
+            return False
+        if self.end_call_requested:
+            return True
+        self.end_call_requested = True
+        self.end_call_audio_drained = False
+        self._last_audio_at = time.monotonic()
+        self._end_call_task = asyncio.create_task(self._finish_agent_end())
+        return True
+
+    async def _finish_agent_end(self):
+        deadline = time.monotonic() + END_CALL_DRAIN_SECONDS
+        generation = self.player.generation
+        while self.end_call_requested and time.monotonic() < deadline:
+            if generation != self.player.generation or not self.bridge.alive:
+                break
+            if self._receive_finished and not self._receive_normal_close:
+                break  # A network failure must not become a successful local hang-up.
+            if not self._receive_finished and time.monotonic() - self._last_audio_at < END_CALL_QUIET_SECONDS:
+                await asyncio.sleep(.02)
+                continue
+            if not await self.player.drain(max(.001, deadline - time.monotonic())):
+                break
+            # The receiver stays live during drain. A late audio chunk restarts settling.
+            if time.monotonic() - self._last_audio_at < END_CALL_QUIET_SECONDS:
+                continue
+            if self._receive_finished and not self._receive_normal_close:
+                break
+            if self.end_call_requested and generation == self.player.generation:
+                self.end_call_audio_drained = True
+            break
+        if not self.done.done():
+            self.done.set_result(None)
+
+    async def _receive_messages(self):
         rate = 16000
         async for frame in self.remote:
             if frame.type != aiohttp.WSMsgType.TEXT:
@@ -204,6 +313,9 @@ class ElevenDialog:
             kind = message.get('type') if self.mode == 'agents' else message.get('message_type')
             if kind == 'conversation_initiation_metadata':
                 meta = message['conversation_initiation_metadata_event']
+                conversation_id = meta.get('conversation_id')
+                if isinstance(conversation_id, str) and conversation_id:
+                    self.observe({'type': 'conversation_id', 'conversation_id': conversation_id})
                 if meta.get('user_input_audio_format') != 'pcm_16000':
                     raise DialogError('У агента ElevenLabs выберите вход PCM 16000 Гц.')
                 match = re.fullmatch(r'pcm_(8000|16000|22050|24000|44100|48000)', meta.get('agent_output_audio_format', ''))
@@ -212,11 +324,17 @@ class ElevenDialog:
             elif kind == 'session_started': await self.ready()
             elif kind == 'ping': await self.remote.send_json({'type': 'pong', 'event_id': message['ping_event']['event_id']})
             elif kind == 'interruption':
+                self.end_call_requested = False
+                self.end_call_audio_drained = False
+                if self._end_call_task:
+                    self._end_call_task.cancel()
+                    self._end_call_task = None
                 self.interrupted_event = max(self.interrupted_event, message.get('interruption_event', {}).get('event_id', -1))
                 self.player.interrupt()
             elif kind == 'audio':
                 event = message['audio_event']
                 if event.get('event_id', 0) <= self.interrupted_event: continue
+                self._last_audio_at = time.monotonic()
                 await self.player.push(base64.b64decode(event['audio_base_64'], validate=True), rate,
                                        self.player.generation, backpressure=False)
                 await self.player.flush(self.player.generation)
@@ -225,10 +343,28 @@ class ElevenDialog:
                     self.cancel_answer()
                     await self.emit({'type': 'interrupted'})
             elif kind == 'committed_transcript' and message.get('text', '').strip():
+                # Scribe may also send timestamp/edited events for this same
+                # segment. Only the stable committed event creates a CRM turn.
+                self.transcript('user', message['text'], source='transcribed')
                 self.start_answer(message['text'].strip())
             elif kind in ('user_transcript', 'agent_response'):
-                # Deliberately do not forward/store conversation text in UI logs.
+                if kind == 'user_transcript':
+                    event = message.get('user_transcription_event') or message.get('user_transcript_event') or {}
+                    self.transcript('user', event.get('user_transcript'), source='transcribed')
+                else:
+                    event = message.get('agent_response_event') or {}
+                    self.transcript('agent', event.get('agent_response'), source='generated')
+                # Activity logs still contain no conversation text.
                 await self.emit({'type': 'activity', 'speaker': 'user' if kind == 'user_transcript' else 'agent'})
+            elif kind == 'agent_response_correction':
+                event = message.get('agent_response_correction_event') or {}
+                original, corrected = event.get('original_agent_response'), event.get('corrected_agent_response')
+                if isinstance(original, str) and isinstance(corrected, str):
+                    self.observe({'type': 'transcript_correction', 'role': 'agent',
+                                  'original_text': original.strip(), 'text': corrected.strip(),
+                                  'source': 'generated'})
+            elif kind == 'agent_tool_response':
+                self.request_end_call(message.get('agent_tool_response'))
             elif kind and (kind.endswith('_error') or kind in ('error', 'rate_limited', 'quota_exceeded')):
                 raise DialogError('ElevenLabs: ' + str(kind)[:80] + '. Проверьте тариф и права API.')
             elif kind == 'client_tool_call':
@@ -293,11 +429,17 @@ class ElevenDialog:
                 allow_redirects=False, **self.route()) as response:
             if response.status != 200: raise DialogError(f'Озвучка ElevenLabs: HTTP {response.status}.')
             tail = b''
+            observed = False
             async for chunk in response.content.iter_chunked(1920):
                 if generation != self.player.generation: return
                 chunk = tail + chunk; usable = len(chunk) // 2 * 2
                 tail = chunk[usable:]
                 if not usable: continue
+                if not observed:
+                    # The complete phrase was generated and audio has started,
+                    # but interruption can prevent part of it reaching the caller.
+                    self.transcript('agent', text, source='generated')
+                    observed = True
                 if self.first_audio is None:
                     self.first_audio = time.monotonic() - self.turn_started
                     await self.emit({'type': 'latency', 'textSeconds': self.first_text, 'audioSeconds': self.first_audio})
@@ -333,6 +475,9 @@ class ElevenDialog:
     async def close(self):
         if self.closed: return
         self.closed = True
+        if self._end_call_task:
+            self._end_call_task.cancel()
+            with suppress(asyncio.CancelledError): await self._end_call_task
         if self.answer: self.answer.cancel()
         if self.sender: self.sender.cancel()
         for task in (self.answer, self.sender):

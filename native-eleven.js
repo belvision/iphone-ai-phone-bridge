@@ -28,6 +28,10 @@ export function createNativeElevenCall({ mode, bridge, hooks = {} }) {
     if (event.type === 'live') {
       opened = true; clearTimeout(startup); session.status = 'live'; hooks.onStatus?.('live');
     } else if (event.type === 'error') { hooks.onError?.(new Error(event.message)); end(); }
+    else if (event.type === 'phone_hangup') {
+      bridge.diagnostic?.(event.ok ? 'Агент завершил разговор. Телефонная линия отключена.' : 'Агент закончил разговор, но отключение телефонной линии не подтверждено. Завершите звонок вручную.');
+      if (!event.ok) hooks.onError?.(new Error('Агент закончил разговор. Завершите звонок вручную: отключение телефонной линии не подтверждено.'));
+    }
     else if (event.type === 'ended') end();
     else if (event.type === 'latency') {
       bridge.diagnostic?.(`ElevenLabs: начало голоса через ${Number(event.audioSeconds).toFixed(2)} с после распознавания.`);

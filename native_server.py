@@ -6,6 +6,7 @@ from contextlib import suppress
 import json
 from pathlib import Path
 import queue
+import socket
 import time
 
 from aiohttp import web, WSMsgType
@@ -314,6 +315,13 @@ def create_app(audio_factory=NativeAudio, phone_monitor=None):
     app.router.add_get("/eleven/settings", server.eleven.settings)
     app.router.add_post("/eleven/settings", server.eleven.settings)
     app.router.add_get("/eleven/conversation", server.eleven.conversation)
+    app.router.add_get("/crm/calls", server.eleven.crm.handle)
+    app.router.add_get("/crm/calls/{call_id}", server.eleven.crm.handle)
+    app.router.add_post("/crm/calls/{call_id}", server.eleven.crm.handle)
+    app.router.add_post("/crm/calls/{call_id}/analyze", server.eleven.crm.handle)
+    app.router.add_post("/crm/calls/{call_id}/contact", server.eleven.crm.handle)
+    app.router.add_get("/crm/contacts", server.eleven.crm.contacts_api)
+    app.router.add_post("/crm/contacts/import", server.eleven.crm.contacts_api)
     app.router.add_route("*", "/retell/{tail:.*}", server.relay_retell)
     app.router.add_get("/audio-routes", server.audio_routes)
     app.router.add_post("/audio-route", server.route_command)
@@ -326,4 +334,13 @@ def create_app(audio_factory=NativeAudio, phone_monitor=None):
 
 
 if __name__ == "__main__":
-    web.run_app(create_app(), host="127.0.0.1", port=8766, access_log=None, print=lambda text: print(text, flush=True))
+    # Reserve the port BEFORE startup may recover interrupted CRM rows. A second
+    # launcher must never recover or summarize a call still owned by this process.
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    try:
+        listener.bind(('127.0.0.1', 8766))
+        listener.setblocking(False)
+        web.run_app(create_app(), sock=listener, access_log=None, print=lambda text: print(text, flush=True))
+    finally: listener.close()
