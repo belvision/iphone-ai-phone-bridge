@@ -24,7 +24,7 @@ const settle = async () => {
   await new Promise(resolve => setImmediate(resolve));
 };
 
-async function harness(initial = phone('idle'), { virtualInstalled = true, prepareBlock = null, savedConnection = null, loadBlock = null } = {}) {
+async function harness(initial = phone('idle'), { virtualInstalled = true, prepareBlock = null, savedConnection = null, loadBlock = null, savedEleven = {} } = {}) {
   const elements = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(([, id]) => [id, {
     id, value: '', checked: false, textContent: '', disabled: false, hidden: false,
     open: false, dataset: {}, focus() { this.focused = true; },
@@ -56,6 +56,7 @@ async function harness(initial = phone('idle'), { virtualInstalled = true, prepa
     setInterval: (fn, delay) => { const id = ++timerId; timers.set(id, { fn, delay, interval: true }); return id; },
     clearInterval: id => timers.delete(id),
     fetch: async (url, options) => {
+      if (url === '/eleven/settings') return {ok:true,json:async()=>({hasElevenKey:false,agentsReady:false,customReady:false,...savedEleven})};
       if (url === '/network-status') return { ok: true, json: async () => ({ proxyEnabled: true, country: 'US' }) };
       if (url === '/connection') {
         if (options?.method === 'POST') {
@@ -120,6 +121,11 @@ async function harness(initial = phone('idle'), { virtualInstalled = true, prepa
       return session;
     },
   });
+  context.createNativeElevenCall = options => {
+    const session = context.createNativeRetellCall({...options,key:'public_key_offline_test_only',agentId:'agent_offline_test_only'});
+    session.provider = options.mode;
+    return session;
+  };
   // Imports are replaced with the controlled dependencies above. Production
   // functions and the real AutoCallGate remain otherwise unchanged.
   const executable = gateSource.replace(/^export\s+/gm, '') + '\n'
@@ -175,6 +181,25 @@ async function running() {
   assert.equal(h.calls.length, 1, 'answered outgoing call starts one mocked session');
   assert.equal(h.state().mode, 'running');
   return h;
+}
+
+// All providers use the same answered-call/cleanup gate. ElevenLabs does not
+// require a Retell public key, and a normal hangup preserves continuous mode.
+for (const [button, mode] of [['engineAgents','agents'],['engineCustom','custom']]) {
+  const h = await harness(phone('idle'),{savedEleven:{hasElevenKey:true,agentsReady:true,customReady:true}});
+  await h.click(button);
+  h.element('key').value = '';
+  await h.click('arm');
+  await h.observe(phone('dialing',1));
+  assert.equal(h.calls.length,0,'no cloud session before the answer');
+  await h.observe(phone('connected',1));
+  assert.equal(h.calls[0].provider,mode);
+  assert.equal(h.element(button).disabled,true,'provider cannot change during a live call');
+  await h.observe(phone('ended',1));
+  assert.equal(h.state().mode,'armed');
+  await h.observe(phone('connected',2));
+  assert.equal(h.calls.length,2);
+  await h.close();
 }
 
 // A single explicit enable survives ordinary call completion, without overlap.

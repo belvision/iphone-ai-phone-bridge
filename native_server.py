@@ -15,6 +15,7 @@ from phone_state import PhoneStateMonitor
 from audio_routes import MicrophoneLease, MODES
 from connection_store import ConnectionStore
 from retell_relay import RetellRelay
+from eleven_routes import ElevenService
 
 ROOT = Path(__file__).resolve().parent
 ALLOWED_HOSTS = {"localhost:8766", "127.0.0.1:8766"}
@@ -68,6 +69,7 @@ class BridgeServer:
         self.lease_task = None
         self.connection_store = ConnectionStore()
         self.retell_relay = RetellRelay()
+        self.eleven = ElevenService(self)
 
     async def network_status(self, request):
         return web.json_response(self.retell_relay.status())
@@ -107,6 +109,7 @@ class BridgeServer:
 
     async def startup(self, app):
         await self.retell_relay.start()
+        await self.eleven.start()
         with suppress(Exception):
             await asyncio.to_thread(self.mic_lease.restore)
         await asyncio.to_thread(self.phone_monitor.start)
@@ -189,6 +192,8 @@ class BridgeServer:
                 except queue.Empty:
                     packet = None
                 if packet is not None:
+                    if self.eleven.dialog:
+                        self.eleven.dialog.feed(packet)
                     await asyncio.wait_for(ws.send_bytes(packet), timeout=0.5)
                 if time.monotonic() >= next_stats:
                     await asyncio.wait_for(ws.send_json(bridge.stats()), timeout=0.5)
@@ -281,6 +286,7 @@ class BridgeServer:
         return ws
 
     async def cleanup(self, app):
+        await self.eleven.close()
         if self.lease_task:
             self.lease_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -305,6 +311,9 @@ def create_app(audio_factory=NativeAudio, phone_monitor=None):
     app.router.add_get("/connection", server.connection)
     app.router.add_post("/connection", server.connection)
     app.router.add_get("/network-status", server.network_status)
+    app.router.add_get("/eleven/settings", server.eleven.settings)
+    app.router.add_post("/eleven/settings", server.eleven.settings)
+    app.router.add_get("/eleven/conversation", server.eleven.conversation)
     app.router.add_route("*", "/retell/{tail:.*}", server.relay_retell)
     app.router.add_get("/audio-routes", server.audio_routes)
     app.router.add_post("/audio-route", server.route_command)

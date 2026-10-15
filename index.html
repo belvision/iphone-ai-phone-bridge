@@ -10,7 +10,7 @@
 <style>
 .route-select{width:100%;font:inherit;font-size:14px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#1c2a3b;margin-bottom:12px}.route-note{font-size:13px;color:#617083;margin:12px 0}.route-note a,.route-options a{color:#2563eb}.route-options{margin-top:22px;border-top:1px solid #e0e6ed;padding-top:16px}.route-options p{font-size:13px;line-height:1.6;margin:0 0 13px;color:#617083}.route-options strong{color:#34465b}select:focus-visible{outline:3px solid #a8c9ff;outline-offset:3px}
 </style>
-<style>.route-buttons{margin-bottom:14px}.route-buttons button[aria-pressed=true]{background:#2563eb;color:#fff;border-color:#2563eb}</style>
+<style>.route-buttons{margin-bottom:14px;flex-wrap:wrap}.route-buttons button[aria-pressed=true]{background:#2563eb;color:#fff;border-color:#2563eb}textarea{width:100%;border:1px solid #cfd8e3;border-radius:8px;padding:10px;font:inherit;resize:vertical}[hidden]{display:none!important}</style>
 </head>
 <body>
 <header>
@@ -24,6 +24,9 @@
 </ol>
 <main>
 <section class="panel" aria-label="Управление помощником">
+<input id="provider" type="hidden" value="retell">
+<div class="actions route-buttons" role="group" aria-label="Сервис разговора"><button id="engineRetell" class="secondary" aria-pressed="true">Retell</button><button id="engineAgents" class="secondary" aria-pressed="false">ElevenLabs Agents</button><button id="engineCustom" class="secondary" aria-pressed="false">Свой диалог</button></div>
+<p id="providerStatus" class="subtle context">Retell — проверенный вариант.</p>
 <div class="status-line"><span id="status" class="status" data-state="idle" role="status">Помощник выключен</span><span id="timeLeft" class="timer"></span></div>
 <p id="autoState" class="subtle context">Включите помощника один раз перед серией тестовых звонков.</p>
 <p id="phoneState" class="subtle context" role="status">Проверяю связь с телефоном…</p>
@@ -31,7 +34,7 @@
 <div class="actions main"><button id="arm">Включить помощника</button><button id="stopAll" class="stop" disabled>Остановить</button></div>
 <p id="notice" class="error" role="alert"></p>
 <p id="networkStatus" class="subtle context" role="status">Проверяю подключение Retell…</p>
-<p class="footnote">Ограничение в 2 минуты снято. Разговор оплачивается по тарифу Retell. Между звонками Retell не работает. «Остановить» выключает помощника и ожидание.</p>
+<p class="footnote">Ограничение в 2 минуты снято. Разговор оплачивается по тарифу выбранного сервиса. «Остановить» выключает помощника и ожидание.</p>
 </section>
 <details id="soundRoutes">
 <summary>Способ передачи звука</summary>
@@ -52,10 +55,29 @@
 <details id="settings">
 <summary>Настройки подключения</summary>
 <div class="details-body">
+<div id="retellFields">
 <label class="field" for="key">Публичный ключ Retell</label><input id="key" type="password" autocomplete="off" placeholder="public_key_…">
 <label class="field" for="agent">ID агента</label><input id="agent" type="text" value="agent_2336de6d9499c807370e9bfe38" spellcheck="false">
 <p class="settings-note">В Retell разрешите для публичного ключа домен localhost. Подключение сохраняется на этом компьютере с шифрованием Windows и подставляется в Chrome и Opera. Используйте Public Key, а не секретный API-ключ.</p>
 <p id="connectionStatus" class="subtle context" role="status">Загружаю сохранённое подключение…</p>
+</div>
+<div id="elevenFields" hidden>
+<label class="field" for="elevenKey">API-ключ ElevenLabs</label><input id="elevenKey" type="password" autocomplete="off" placeholder="Оставьте пустым, если ключ уже сохранён">
+<div id="agentsFields"><label class="field" for="elevenAgent">ID агента ElevenLabs</label><input id="elevenAgent" type="text" spellcheck="false"></div>
+<div id="customFields">
+<label class="field" for="voiceId">ID голоса ElevenLabs</label><input id="voiceId" type="text" spellcheck="false">
+<label class="field" for="llmUrl">Адрес API модели</label><input id="llmUrl" type="url" spellcheck="false" placeholder="https://api.deepseek.com/chat/completions">
+<label class="field" for="llmModel">Модель ответов</label><input id="llmModel" type="text" spellcheck="false">
+<label class="field" for="llmKey">API-ключ модели</label><input id="llmKey" type="password" autocomplete="off" placeholder="Оставьте пустым, если ключ уже сохранён">
+<label class="field" for="replyPauseMs">Пауза после речи абонента, мс</label><input id="replyPauseMs" type="number" min="250" max="1500" step="50" value="350">
+</div>
+<label class="field" for="greeting">Первое сообщение</label><textarea id="greeting" rows="3"></textarea>
+<label class="field" for="dialogPrompt">Инструкция помощнику</label><textarea id="dialogPrompt" rows="6"></textarea>
+<p class="settings-note">Агент замолкает при перебивании и слушает новую реплику. Уменьшайте паузу для быстрого ответа; увеличивайте, если агент начинает говорить раньше, чем собеседник закончил.</p>
+<p class="settings-note">Ключи сохраняются с шифрованием Windows. DeepSeek работает напрямую; ElevenLabs — через прокси США. В своём диалоге используются потоковое распознавание и озвучка, короткие ответы и отмена речи при перебивании.</p>
+<button id="saveEleven" class="secondary">Сохранить ElevenLabs</button>
+<p id="elevenStatus" class="subtle context" role="status">Загружаю настройки…</p>
+</div>
 <p id="settingsError" class="error" role="alert"></p>
 </div>
 </details>

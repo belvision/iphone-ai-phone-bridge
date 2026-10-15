@@ -1,0 +1,13 @@
+{
+  "date": "2026-10-15",
+  "method": "Synthetic Russian caller phrase, 5.666 s of PCM 16 kHz. No phone audio or user conversation was recorded. Playback is paced at real time. End-to-end times run from the end of caller audio to the first nonzero agent audio at the local bridge.",
+  "network": {"deepseek": "direct", "elevenlabs": "owner US HTTP proxy", "codex_explicit_proxy_test": "owner US HTTP proxy"},
+  "deepseek_direct": {"model": "deepseek-v4-flash", "thinking": "disabled", "first_text_seconds": [0.853, 0.951, 1.983], "full_short_answer_seconds": [1.310, 1.244, 2.269]},
+  "custom_dialog": {"asr": "Scribe v2 realtime, local 450 ms endpoint detection and manual commit", "llm": "deepseek-v4-flash direct", "tts": "eleven_flash_v2_5, Sarah, PCM 24 kHz", "successful_end_to_end_seconds": [2.386, 1.661, 1.898], "observed_connection_or_response_failures": 2},
+  "eleven_agents": {"asr": "hosted", "llm": "DeepSeek Flash 4.1 (hosted)", "tts": "eleven_v4_turbo, Eric, PCM 16 kHz", "successful_end_to_end_seconds": [0.960, 1.439], "connection_seconds": [2.308, 0.867], "eager_turns_and_prompt_overrides_check_seconds": 1.293},
+  "scribe_realtime": {"manual_commit_to_final_transcript_seconds": 0.371, "topic_words_recognized": true},
+  "whisper": {"model": "faster-whisper small", "device": "Intel i5-12400 CPU, int8, 4 threads", "cold_load_seconds": 5.239, "beam_1_recognition_seconds": [2.616, 2.285, 2.352], "beam_5_recognition_seconds": [2.632, 2.521, 3.049], "topic_words_recognized": true},
+  "codex_astra": {"model": "gpt-6-astra", "effort": "low", "cli": "0.162.0-alpha.17.2", "cli_default_route_full_answer_seconds": [13.248, 13.797, 12.503], "explicit_US_proxy_test": "no completed answer within 45 seconds", "selected_for_live_calls": false},
+  "limits": ["Small synthetic sample, not a production latency guarantee", "Different hosted/custom voices and TTS models: this compares complete candidates, not an isolated component", "Bluetooth, cellular network and real caller audio have not yet been tested with the new providers", "Marina library voice returned HTTP 402 on this free account; no subscription was purchased"],
+  "first_phone_test_recommendation": "ElevenLabs Agents; retain Retell as the known-working fallback"
+}

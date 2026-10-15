@@ -1,5 +1,6 @@
 import { startNativeBridge } from './browser-native.js';
 import { createNativeRetellCall } from './native-retell.ts';
+import { createNativeElevenCall } from './native-eleven.js';
 import { AutoCallGate, describePhoneState } from './auto-call.js';
 const el = id => document.getElementById(id);
 const gate = new AutoCallGate();
@@ -8,6 +9,32 @@ let phoneRequest, pollTimer, disposed = false;
 let routeTimer, preparedMode = null, routePolling = false;
 let connectionLoading = true, connectionDirty = false, connectionVersion = 0, connectionTimer;
 let connectionSaveQueue = Promise.resolve();
+let elevenConfig = {}, elevenLoading = true, elevenSaving = false;
+function provider() { return el('provider').value || 'retell'; }
+function providerName() { return {retell:'Retell',agents:'ElevenLabs Agents',custom:'Свой диалог'}[provider()]; }
+async function loadEleven() {
+  try {
+    const response = await fetch('/eleven/settings', {cache:'no-store', signal:AbortSignal.timeout(4000)});
+    if (!response.ok) throw new Error();
+    elevenConfig = await response.json();
+    for (const [field,key] of [['elevenAgent','agentId'],['voiceId','voiceId'],['llmUrl','llmUrl'],['llmModel','llmModel'],['greeting','greeting'],['dialogPrompt','prompt']]) el(field).value = elevenConfig[key] || '';
+    el('replyPauseMs').value = String(elevenConfig.replyPauseMs || 350);
+    el('elevenStatus').textContent = elevenConfig.hasElevenKey ? 'Ключ ElevenLabs сохранён на этом компьютере.' : 'Добавьте ключ ElevenLabs.';
+  } catch { el('elevenStatus').textContent = 'Не удалось загрузить настройки ElevenLabs.'; }
+  finally { elevenLoading = false; controls(); }
+}
+el('saveEleven').onclick = async () => {
+  elevenSaving = true; controls();
+  try {
+    const body = {elevenKey:el('elevenKey').value.trim(),llmKey:el('llmKey').value.trim(),agentId:el('elevenAgent').value.trim(),voiceId:el('voiceId').value.trim(),llmUrl:el('llmUrl').value.trim(),llmModel:el('llmModel').value.trim(),greeting:el('greeting').value,prompt:el('dialogPrompt').value,replyPauseMs:Number(el('replyPauseMs').value || 350),syncAgent:provider()==='agents'};
+    const response = await fetch('/eleven/settings', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(20000)});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Не удалось сохранить настройки.');
+    elevenConfig = result; el('elevenKey').value = el('llmKey').value = '';
+    el('elevenStatus').textContent = body.syncAgent ? 'Инструкция и управление разговором сохранены в ElevenLabs и на этом компьютере.' : 'Настройки сохранены с шифрованием Windows.';
+  } catch (error) { el('elevenStatus').textContent = error.message; }
+  finally { elevenSaving = false; controls(); }
+};
 async function loadConnection() {
   const version = connectionVersion;
   try {
@@ -64,7 +91,7 @@ async function loadNetworkStatus() {
     const response = await fetch('/network-status', { cache: 'no-store', signal: AbortSignal.timeout(3000) });
     if (!response.ok) throw new Error('network');
     const status = await response.json();
-    el('networkStatus').textContent = status.proxyEnabled ? 'Retell: используется прокси США.' : 'Американский прокси Retell не настроен.';
+    el('networkStatus').textContent = status.proxyEnabled ? 'Прокси США для Retell и ElevenLabs настроен.' : 'Американский прокси не настроен.';
   } catch { el('networkStatus').textContent = 'Не удалось проверить подключение Retell.'; }
 }
 async function routeRequest(command) {
@@ -125,8 +152,19 @@ async function pollRoutes() {
 }
 function log(message) { el('log').textContent = `${new Date().toLocaleTimeString()} ${message}\n` + el('log').textContent.slice(0, 5500); }
 function controls() {
-  const busy = pending > 0 || stopping || connectionLoading;
+  const busy = pending > 0 || stopping || connectionLoading || elevenSaving;
   const armed = gate.mode === 'armed';
+  for (const [id, name] of [['engineRetell','retell'],['engineAgents','agents'],['engineCustom','custom']]) {
+    el(id).disabled = busy || !!bridge || !!call || gate.mode !== 'idle';
+    el(id).ariaPressed = String(provider() === name);
+  }
+  el('saveEleven').disabled = busy || !!bridge || !!call || gate.mode !== 'idle' || elevenLoading;
+  el('saveEleven').textContent = provider() === 'agents' ? 'Сохранить инструкцию агента' : 'Сохранить настройки';
+  el('retellFields').hidden = provider() !== 'retell';
+  el('elevenFields').hidden = provider() === 'retell';
+  el('agentsFields').hidden = provider() !== 'agents';
+  el('customFields').hidden = provider() !== 'custom';
+  el('providerStatus').textContent = provider() === 'retell' ? 'Retell — проверенный вариант.' : provider() === 'agents' ? 'Диалог целиком ведёт агент ElevenLabs.' : 'Наш диалог: распознавание → модель ответов → голос ElevenLabs.';
   el('bridgeStart').disabled = busy || !!bridge || armed;
   el('tone').disabled = busy || !bridge || !!call || armed;
   el('stopAll').disabled = stopping ? !gate.automatic : (!pending && !bridge && !call && gate.mode === 'idle');
@@ -156,6 +194,13 @@ function validateAgent() {
     el('confirmed').focus();
     el('notice').textContent = 'Отметьте, что собеседник предупреждён о тесте с AI.';
     throw new Error(el('notice').textContent);
+  }
+  if (provider() !== 'retell') {
+    if (elevenLoading || !elevenConfig[provider() === 'agents' ? 'agentsReady' : 'customReady']) {
+      el('settings').open = true;
+      throw new Error('Заполните и сохраните настройки выбранного варианта ElevenLabs.');
+    }
+    return {};
   }
   const key = el('key').value.trim(), agentId = el('agent').value.trim();
   const fieldError = (id, message) => {
@@ -313,26 +358,28 @@ async function startAgent({ sequence: automaticSequence } = {}) {
     const { key, agentId } = validateAgent();
     if (!gate.markRunning(sequence)) { opened.stop(); return; }
     clockStart();
-    call = createNativeRetellCall({ key, agentId, bridge, hooks: {
-      onStatus: status => { if (token !== operation || stopping) return; controls(); log(status === 'live' ? 'Retell подключён. Собеседник может говорить с агентом.' : 'Retell: ' + status); },
-      onAgentStartTalking: () => { if (token === operation && !stopping) log('Retell начал ответ голосом.'); },
+    const createCall = provider() === 'retell' ? createNativeRetellCall : createNativeElevenCall;
+    const service = providerName();
+    call = createCall({ key, agentId, mode: provider(), bridge, hooks: {
+      onStatus: status => { if (token !== operation || stopping) return; controls(); log(status === 'live' ? service + ' подключён. Собеседник может говорить с агентом.' : service + ': ' + status); },
+      onAgentStartTalking: () => { if (token === operation && !stopping) log(service + ' начал ответ голосом.'); },
       onError: error => {
         if (token !== operation || stopping) return;
         const message = String(error?.message || error || 'Ошибка соединения').replace(/(?:public_key_|key_)[A-Za-z0-9_-]+/g, '[ключ скрыт]');
-        log('Retell: ' + message.slice(0, 600));
+        log(service + ': ' + message.slice(0, 600));
         el('notice').textContent = /sanctioned region/i.test(message)
           ? 'Retell отклонил доступ из региона. Агент не подключён. Проверьте американский прокси.'
-          : message.includes('американский прокси') ? message : 'Ошибка Retell: ' + message.slice(0, 240);
-        void stopAll('Тест остановлен после ошибки Retell.');
+          : message.includes('американский прокси') ? message : 'Ошибка ' + service + ': ' + message.slice(0, 240);
+        void stopAll('Разговор остановлен после ошибки ' + service + '.');
       },
       onEnd: () => {
         if (token !== operation || stopping) return;
         if (opened.closed) {
           void stopAll('Аудиомост прервался. Помощник и ожидание выключены.');
-        } else void finishAgent('Сессия Retell завершена. Сотовый звонок завершите отдельно.');
+        } else void finishAgent('Сессия ' + service + ' завершена. Сотовый звонок завершите отдельно.');
       },
     } });
-    log('Подключаю Retell через аудиомост Windows…');
+    log('Подключаю ' + service + ' через аудиомост Windows…');
   } catch (error) {
     if (token === undefined || token === operation) await stopAll('Подключение остановлено.');
     else opened?.stop();
@@ -368,7 +415,13 @@ for (const [id, mode] of [['routeDirect', 'direct-hfp'], ['routeVirtual', 'virtu
   el('audioMode').onchange(); controls(); void saveConnection();
 };
 controls();
+for (const [id,name] of [['engineRetell','retell'],['engineAgents','agents'],['engineCustom','custom']]) el(id).onclick = () => {
+  if (el(id).disabled) return;
+  el('provider').value = name; el('notice').textContent = '';
+  controls();
+};
 void loadConnection();
+void loadEleven();
 void loadNetworkStatus();
 void pollPhone();
 void pollRoutes();
