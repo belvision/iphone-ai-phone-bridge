@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Помощник для звонков</title>
+<style>
+:root{font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;color:#1c2a3b;background:#f5f7fa;font-synthesis:none}*{box-sizing:border-box}body{max-width:760px;margin:0 auto;padding:44px 24px 40px}h1{font-size:32px;line-height:1.2;letter-spacing:-.8px;margin:0 0 10px;font-weight:720}p{margin:0}.subtitle{color:#617083;max-width:560px}.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;list-style:none;padding:0;margin:30px 0 24px;counter-reset:steps}.steps li{counter-increment:steps;display:flex;align-items:flex-start;gap:10px;font-size:14px;line-height:1.45;color:#4e6075}.steps li::before{content:counter(steps);display:grid;place-items:center;flex:none;width:26px;height:26px;border-radius:50%;background:#e7edf6;color:#355271;font-size:13px;font-weight:700}.panel{background:#fff;border:1px solid #e0e6ed;border-radius:18px;padding:26px;box-shadow:0 5px 20px #20394d04;margin-bottom:16px}.status-line{display:flex;align-items:center;justify-content:space-between;gap:12px}.status{font-size:19px;font-weight:650;display:flex;align-items:center;gap:9px}.status::before{content:"";width:8px;height:8px;border-radius:50%;background:#a2afbd;flex:none}.status[data-state=ready]::before,.status[data-state=live]::before{background:#218565}.subtle{font-size:14px;color:#617083}.context{margin:7px 0 0}.check{display:flex;gap:10px;align-items:flex-start;font-size:15px;margin:24px 0 18px;cursor:pointer}.check input{width:18px;height:18px;accent-color:#2563eb;margin:3px 0 0;flex:none}.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}button{font:inherit;font-size:15px;font-weight:650;padding:12px 17px;border:1px solid transparent;border-radius:10px;background:#2563eb;color:white;cursor:pointer;transition:background .15s}button:hover:not(:disabled){background:#1d4ed8}button.secondary{background:#f4f6f9;color:#34465b;border-color:#e2e7ee}button.secondary:hover:not(:disabled){background:#e9eef5}button.stop{background:#fff;color:#9c3f47;border-color:#ead9dc}button.stop:hover:not(:disabled){background:#fbf1f2}button:disabled{opacity:.42;cursor:default}button:focus-visible,summary:focus-visible,input:focus-visible{outline:3px solid #a8c9ff;outline-offset:3px}.footnote{font-size:12px;color:#788698;margin-top:16px}.timer{font-size:13px;color:#617083;white-space:nowrap;font-variant-numeric:tabular-nums}details{background:#fff;border:1px solid #e0e6ed;border-radius:13px;margin:10px 0}summary{cursor:pointer;font-size:14px;font-weight:600;padding:17px 20px;color:#415469;user-select:none}summary::marker{color:#8294a8}details[open] summary{border-bottom:1px solid #edf0f5}.details-body{padding:20px}.field{display:block;font-size:14px;font-weight:550;margin:0 0 6px}input[type=password],input[type=text]{display:block;width:100%;font:14px/1.5 system-ui;border:1px solid #cbd5e1;border-radius:8px;padding:10px 12px;margin:0 0 16px;color:#1c2a3b;background:#fff}.settings-note{font-size:12px;line-height:1.55;color:#788698}.meters{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:20px 0 10px}.meters label{font-size:13px;color:#617083}meter{width:100%;height:20px;display:block}.diagnostic-help{margin:0 0 16px}.diagnostic-status{margin:10px 0 18px;overflow-wrap:anywhere}#log{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 ui-monospace,monospace;max-height:220px;overflow:auto;margin:18px 0 0;padding:14px;background:#f7f9fc;border-radius:8px;color:#516277}.error{font-size:13px;color:#a23642;margin-top:12px}.error:empty{display:none}@media(max-width:560px){body{padding:28px 16px}h1{font-size:28px}.steps{grid-template-columns:1fr;gap:12px;margin:24px 0 20px}.steps li{align-items:center}.panel{padding:21px 18px}.status-line{align-items:flex-start}.status{font-size:17px}.actions.main button:first-child{width:100%}.actions.main .stop{width:100%}.check{font-size:14px}.details-body{padding:18px}.meters{grid-template-columns:1fr;gap:10px}}
+</style>
+<style>
+.route-select{width:100%;font:inherit;font-size:14px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:#1c2a3b;margin-bottom:12px}.route-note{font-size:13px;color:#617083;margin:12px 0}.route-note a,.route-options a{color:#2563eb}.route-options{margin-top:22px;border-top:1px solid #e0e6ed;padding-top:16px}.route-options p{font-size:13px;line-height:1.6;margin:0 0 13px;color:#617083}.route-options strong{color:#34465b}select:focus-visible{outline:3px solid #a8c9ff;outline-offset:3px}
+</style>
+<style>.route-buttons{margin-bottom:14px}.route-buttons button[aria-pressed=true]{background:#2563eb;color:#fff;border-color:#2563eb}</style>
+</head>
+<body>
+<header>
+<h1>Помощник для звонков</h1>
+<p class="subtitle">Голосовой AI разговаривает с собеседником через ваш iPhone.</p>
+</header>
+<ol class="steps" aria-label="Как начать">
+<li>Включите помощника</li>
+<li>Позвоните через<br>«Связь с телефоном»</li>
+<li>После ответа<br>подключится AI</li>
+</ol>
+<main>
+<section class="panel" aria-label="Управление помощником">
+<div class="status-line"><span id="status" class="status" data-state="idle" role="status">Помощник выключен</span><span id="timeLeft" class="timer"></span></div>
+<p id="autoState" class="subtle context">Включите помощника один раз перед серией тестовых звонков.</p>
+<p id="phoneState" class="subtle context" role="status">Проверяю связь с телефоном…</p>
+<label class="check"><input id="confirmed" type="checkbox"><span>Собеседники предупреждены о тесте с AI.</span></label>
+<div class="actions main"><button id="arm">Включить помощника</button><button id="stopAll" class="stop" disabled>Остановить</button></div>
+<p id="notice" class="error" role="alert"></p>
+<p id="networkStatus" class="subtle context" role="status">Проверяю подключение Retell…</p>
+<p class="footnote">Ограничение в 2 минуты снято. Разговор оплачивается по тарифу Retell. Между звонками Retell не работает. «Остановить» выключает помощника и ожидание.</p>
+</section>
+<details id="soundRoutes">
+<summary>Способ передачи звука</summary>
+<div class="details-body">
+<label class="field" for="audioMode">Выберите способ перед включением помощника</label>
+<input id="audioMode" type="hidden" value="direct-hfp">
+<div class="actions route-buttons" role="group" aria-label="Способ передачи звука"><button id="routeDirect" class="secondary" aria-pressed="true">Через iPhone</button><button id="routeVirtual" class="secondary" aria-pressed="false">Через VB-CABLE</button></div>
+<p id="routeStatus" class="subtle" role="status">Проверяю устройства…</p>
+<p id="routeNotice" class="route-note" hidden>Виртуальный режим временно меняет микрофон Windows на голос агента. Другие программы также могут получать его вместо вашего голоса. «Остановить» возвращает прежний микрофон. Динамики оставьте обычными. <a href="https://vb-audio.com/Cable/index.htm" target="_blank" rel="noopener noreferrer">Официальный VB-CABLE</a>.</p>
+<div class="route-options">
+<p><strong>Виртуальный микрофон — первый вариант для проверки.</strong> Сохраняет ваш номер A1 и ручной набор. Позволяет «Связи с телефоном» самой передавать голос по Bluetooth. Драйвер и пробный звонок нужны до оценки качества.</p>
+<p><strong>SIP оператора — вариант для постоянной работы.</strong> Retell связывается с оператором без iPhone и Bluetooth. Нужны совместимый SIP-транк и отдельная оплата телефонии. Возможность показывать ваш мобильный номер должен подтвердить оператор. <a href="https://docs.retellai.com/deploy/custom-telephony" target="_blank" rel="noopener noreferrer">Подключение Retell</a>.</p>
+<p><strong>Шлюз с SIM-картой — отдельное оборудование.</strong> Соединяет SIP с мобильной сетью. Вашу SIM придётся переставить в шлюз. Нужно подобрать оборудование с поддержкой сетей A1 и согласовать условия использования; готовое подключение здесь пока отсутствует.</p>
+<p><strong>Обычный USB-кабель iPhone → ПК</strong> не заменяет Bluetooth для звонков в «Связи с телефоном».</p>
+</div>
+</div>
+</details>
+<details id="settings">
+<summary>Настройки подключения</summary>
+<div class="details-body">
+<label class="field" for="key">Публичный ключ Retell</label><input id="key" type="password" autocomplete="off" placeholder="public_key_…">
+<label class="field" for="agent">ID агента</label><input id="agent" type="text" value="agent_2336de6d9499c807370e9bfe38" spellcheck="false">
+<p class="settings-note">В Retell разрешите для публичного ключа домен localhost. Подключение сохраняется на этом компьютере с шифрованием Windows и подставляется в Chrome и Opera. Используйте Public Key, а не секретный API-ключ.</p>
+<p id="connectionStatus" class="subtle context" role="status">Загружаю сохранённое подключение…</p>
+<p id="settingsError" class="error" role="alert"></p>
+</div>
+</details>
+<details id="diagnostics">
+<summary>Проверка звука и журнал</summary>
+<div class="details-body">
+<p class="subtle diagnostic-help">Для проверки начните звонок и оставьте звук на компьютере. На время теста выключите музыку и видео.</p>
+<div class="actions"><button id="bridgeStart" class="secondary">Проверить звук</button><button id="tone" class="secondary" disabled>3 тестовых сигнала</button></div>
+<div class="meters"><label>Речь собеседника<meter id="inputLevel" min="0" max="1" value="0"></meter></label><label>Звук в телефон<meter id="outputLevel" min="0" max="1" value="0"></meter></label></div>
+<p id="bridgeState" class="subtle diagnostic-status">Проверка звука не запущена.</p>
+<button id="start" class="secondary">Подключить AI вручную</button>
+<pre id="log" aria-live="polite">Помощник готов к настройке.</pre>
+</div>
+</details>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

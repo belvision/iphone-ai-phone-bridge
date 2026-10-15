@@ -1,0 +1,16 @@
+{
+  "name": "retell-phone-bridge",
+  "version": "1.0.0",
+  "description": "Local experimental iPhone Phone Link to Retell audio bridge",
+  "main": "index.js",
+  "scripts": {
+    "build": "esbuild app-source.js --bundle --outfile=app.js --format=iife"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "esbuild": "0.28.2",
+    "retell-client-js-sdk": "3.0.2"
+  }
+}
