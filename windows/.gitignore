@@ -1,0 +1,10 @@
+bin/
+obj/
+publish/
+*.dpapi
+*.sqlite*
+.env*
+*.log
+contacts.html
+*.user
+.vs/
